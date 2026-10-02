@@ -1,198 +1,194 @@
-<div align="center">
+<p align="center">
+  <img src="desktop/kurek.png" alt="Kurekizmo Icon" width="128" style="border-radius: 24px;" />
+</p>
 
-<img src="desktop/kurek.png" alt="Kurekizmo Icon" width="140" style="border-radius: 28px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);" />
+<p align="center">
+  <strong>Kurekizmo</strong>
+</p>
 
-# ⚡ KUREKIZMO
-### Ultra-Fast, Headless Autonomous Personal AI Assistant
-**DeepSeek-Flash Reasoning • xAI Grok Voice • Real-Time Screen Vision • Live Web Search • Hermes Memory**
+<p align="center">
+  <strong>Autonomous, headless personal AI assistant with native screen vision, xAI Grok voice, and live web intelligence. Built for Arch Linux (Hyprland) and macOS. ~45MB RAM.</strong>
+</p>
 
-[![OS Linux](https://img.shields.io/badge/Arch_Linux-Omarchy_Quattro_%2F_Hyprland-1793D1?style=for-the-badge&logo=arch-linux&logoColor=white)](https://archlinux.org/)
-[![OS macOS](https://img.shields.io/badge/macOS-Sonoma_%2F_Sequoia-000000?style=for-the-badge&logo=apple&logoColor=white)](https://apple.com/macos)
-[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org/)
-[![Brain](https://img.shields.io/badge/Brain-DeepSeek--Flash-4E6EF2?style=for-the-badge&logo=deepseek&logoColor=white)](https://api.deepseek.com)
-[![Voice](https://img.shields.io/badge/Voice-xAI_Grok_TTS_(Sol)-1E1E1E?style=for-the-badge&logo=x&logoColor=white)](https://x.ai)
-[![RAM](https://img.shields.io/badge/Memory_Footprint-~45MB_RAM-10B981?style=for-the-badge)](/)
-[![License](https://img.shields.io/badge/License-MIT-F59E0B?style=for-the-badge)](LICENSE)
-
-<br/>
-
-> **Kurekizmo** is a lean, sub-second personal AI assistant built for high-performance developer workflows on **Arch Linux (Hyprland)** and **macOS**. It eliminates bloated 500MB Electron/Qt wrappers in favor of a 45MB headless daemon, instant mouse scroll-wheel summoning, native monitor perception, continuous screen observation, live internet research, and seamless memory continuity.
-
-</div>
-
----
-
-## ⚡ Highlights & Key Capabilities
-
-| Capability | Technology | Description |
-|---|---|---|
-| 👁️ **Visual Perception Cortex** | `grim` (Wayland) / `screencapture` + Gemini 3.8 Flash | Native zero-latency screen capture. Inspects open code, errors, and designs on demand or continuously monitors your screen (*"watch the screen till I say so"*). |
-| 🎙️ **Voice & Audio Pipeline** | Deepgram Nova-2 / Whisper + xAI Grok Cloud TTS | Sub-second STT with DC offset stripping and conversational natural speech using xAI's **Sol** (`sal`) voice streamed over PipeWire `mpv` (Linux) or `afplay` (macOS). |
-| 🧠 **Autonomous Brain** | DeepSeek-Flash (`api.deepseek.com`) | Direct platform reasoning with native OpenAI-compatible tool calling. Uninhibited, witty, and loyal execution of system commands without corporate lecturing. |
-| 🌐 **Real-Time Web Intelligence** | DuckDuckGo (`ddgs`) + News + Locale Synthesis | Automatically parses conversational queries, resolves user timezone (e.g. Slovenia / CEST), and synthesizes live timetables (MotoGP, F1, current news). |
-| 🖱️ **Instant Mouse & Key Summon** | Hyprland `mouse:274` / macOS Fn Monitor | Click your mouse scroll wheel from any window or press `Super+Space` to talk instantly. Auto-submits on 1.2s silence. |
-| 💾 **Three-Tier Memory Architecture** | Rolling History + Hermes Sync | Dynamic bidirectional synchronization with Hermes knowledge base (`~/.hermes/profiles/eldio/memories/USER.md` & `MEMORY.md`). |
-| 🛠️ **18 Direct Computer Tools** | Native System Automation | File manager, browser automation (Playwright), volume/brightness controllers, window tiling, reminders, and application launchers. |
+<p align="center">
+  <img src="https://img.shields.io/badge/Platform-Arch%20Linux%20(Hyprland)%20%7C%20macOS-1793D1?style=flat-square&logo=arch-linux&logoColor=white" alt="Platform">
+  <img src="https://img.shields.io/badge/Brain-DeepSeek--Flash-4E6EF2?style=flat-square&logo=deepseek&logoColor=white" alt="DeepSeek">
+  <img src="https://img.shields.io/badge/Voice-xAI%20Grok%20(Sol)-1E1E1E?style=flat-square&logo=x&logoColor=white" alt="xAI Grok">
+  <img src="https://img.shields.io/badge/Vision-Gemini%203.8%20Flash-4285F4?style=flat-square&logo=google&logoColor=white" alt="Gemini Vision">
+  <img src="https://img.shields.io/badge/Footprint-~45MB%20RAM-brightgreen?style=flat-square" alt="Memory">
+  <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
+</p>
 
 ---
 
-## 🏗️ System Architecture
+Kurekizmo is a sub-second, local-first personal AI assistant engineered for high-performance developer setups. It discards heavy 500MB+ Electron/Qt frameworks in favor of an ultra-lean 45MB Python daemon, instant mouse scroll-wheel summoning, native monitor perception via Wayland `grim`, real-time internet search, and bidirectional memory continuity with Hermes.
+
+---
+
+## ⚡ Highlights
+
+- **Visual Perception Cortex:** Zero-latency monitor perception via `grim` (Wayland/Hyprland) or `screencapture` (macOS) analyzed through `gemini-3.8-flash`. Supports one-off inspection (*"What is this error?"*) and continuous background observation (*"Watch my screen till I say so and tell me what you think"*).
+- **Voice & Reasoning:** Direct platform reasoning through DeepSeek-Flash (`api.deepseek.com`), sub-second transcription with Deepgram Nova-2 / Whisper, and natural conversational speech using xAI Grok Cloud TTS (**Sol** voice) streamed directly over PipeWire `mpv` (Linux) or `afplay` (macOS).
+- **Live Internet Research:** Real-time web intelligence powered by DuckDuckGo (`ddgs`) with automatic locale context (Slovenia / CEST / UTC+2) for exact timetables (MotoGP, F1, live sports, tech releases).
+- **Instant Mouse Summon:** Click your mouse scroll-wheel (`mouse:274`) or press `Super+Space` from any workspace. Auto-submits on 1.2s silence.
+- **Three-Tier Persistent Memory:** In-flight rolling context, long-term structured storage, and live bidirectional sync with Hermes (`~/.hermes/profiles/eldio/memories/USER.md` & `MEMORY.md`).
+- **18 Native System Tools:** Full file management, Playwright browser control, volume/brightness adjusters, Hyprland window tiling, alarms, and application launchers.
+
+---
+
+## 🏗️ Architecture
 
 ```mermaid
 flowchart TD
-    subgraph Inputs ["Summon & Triggers"]
-        MiddleClick["🖱️ Middle Click (mouse:274)\nSuper + Middle Click"]
+    subgraph Inputs ["Summon Triggers"]
+        Mouse["🖱️ Middle Click (mouse:274)\nSuper + Middle Click"]
         Launcher["🚀 Desktop Launcher (kurek.desktop)\nkurek toggle | prompt"]
         MacBar["🍏 macOS Menu Bar (KurekBar.swift)\nFn Global Push-to-Talk"]
     end
 
-    subgraph Daemon ["Kurek Daemon :8790 (kurek_daemon.py ~45MB)"]
+    subgraph Daemon ["Kurek Daemon :8790 (~45MB RAM)"]
         State["State Engine (IDLE / LISTENING / THINKING / SPEAKING)"]
-        AudioIn["Microphone Capture (sounddevice)\nDC Offset Removal + AC RMS Gate"]
-        STT["STT Engine: Deepgram Nova-2\n(Fallback: local faster-whisper)"]
-        Brain["LLM Cortex: DeepSeek-Flash\n(api.deepseek.com)"]
-        TTS["TTS Engine: xAI Grok Cloud (Sol)\nPipeWire mpv / afplay"]
+        Audio["Microphone (sounddevice) • DC Offset Stripping • AC RMS Gate"]
+        STT["STT Engine: Deepgram Nova-2 (Fallback: faster-whisper)"]
+        LLM["Brain: DeepSeek-Flash (api.deepseek.com)"]
+        TTS["Speech: xAI Grok Cloud Sol (PipeWire mpv / afplay)"]
     end
 
-    subgraph Actions ["18 Auto-Discovered Tools (actions/)"]
-        Vision["👁️ screen_vision\ngrim / screencapture + Gemini 3.8 Flash"]
-        Web["🌐 web_search\nDuckDuckGo + News + Locale Engine"]
-        Files["📂 file_controller\nNative Filesystem CRUD"]
-        Settings["⚙️ computer_settings & desktop_control\nVolume, Brightness, Hyprland Windows"]
-        Browser["🧭 browser_control\nPlaywright Headless / Headed"]
-        Memory["🧠 manage_memory\nHermes Continuity Sync"]
+    subgraph Tools ["18 Discovered Actions (actions/)"]
+        Vision["👁️ screen_vision • grim + Gemini 3.8 Flash"]
+        Web["🌐 web_search • DuckDuckGo + News + Locale Engine"]
+        Files["📂 file_controller • Native Filesystem CRUD"]
+        Desktop["🖥️ desktop_control & settings • Window Tiling & Audio"]
+        Browser["🧭 browser_control • Playwright Headless / Headed"]
+        Memory["🧠 manage_memory • Hermes Continuity Sync"]
     end
 
     Inputs -->|HTTP / Socket| State
-    State --> AudioIn --> STT --> Brain
-    Brain -->|Tool Dispatch| Actions
-    Actions -->|Context & Results| Brain
-    Brain --> TTS
+    State --> Audio --> STT --> LLM
+    LLM -->|Tool Calling| Tools
+    Tools -->|Context & Results| LLM
+    LLM --> TTS
 ```
 
 ---
 
-## 👁️ Visual Cortex: See Your Monitor
+## 👁️ Visual Perception Cortex
 
-Kurekizmo natively sees what you are working on without heavy local VLM overhead:
+Kurekizmo inspects your displays natively with zero RAM overhead:
 
-* **On-Demand Inspection:**
-  > *"Kurek, look at my screen. What is causing this compiler error?"*  
-  > *"What car wallpaper is on my desktop?"*  
-  > Takes an instant snapshot via Wayland `grim` (<15ms), feeds it to Gemini 3.8 Flash, and speaks the solution through Sol.
-* **Continuous Screen Observation:**
-  > *"Kurek, watch the screen till I say so and tell me what you think about my UI."*  
-  > Launches a low-overhead background watcher with structural frame-diffing. It monitors your canvas, detects visual changes, evaluates them with DeepSeek, and chimes in verbally with critiques and insights until you say *"stop watching"*.
+### On-Demand Inspection
+> *"Kurek, look at my screen. What is causing this compiler error?"*  
+> *"What car wallpaper is on my desktop?"*  
+> Takes a sub-15ms screenshot via `grim`, feeds it to Gemini 3.8 Flash, and delivers a concise spoken diagnosis.
 
----
-
-## 🌐 Live Web Search: Real-Time & Locale-Aware
-
-Unlike generic assistants that hallucinate outdated schedules, Kurekizmo extracts real-time internet data:
-
-* **Zero-Hallucination Sports & Timetables:**
-  > *"When does today start the MOTOGP in my locale?"*  
-  > Automatically resolves your local timezone (**Slovenia / CEST / UTC+2**), queries DuckDuckGo text/news feeds, and delivers the exact session start times:
-  > *"The Japanese Grand Prix Sprint race begins today at 08:00 AM CEST, with the main race tomorrow at 07:00 AM CEST."*
-* **Live News & Tech Research:** Fetches the latest releases, documentation, and breaking headlines with automatic deduplication.
+### Continuous Screen Observation
+> *"Kurek, watch the screen till I say so and tell me what you think about my UI layout."*  
+> Launches a background watcher with structural frame-diffing. It monitors your canvas, detects visual shifts, evaluates them against your focus topic, and speaks candid critiques and warnings through Sol until you say *"stop watching"*.
 
 ---
 
-## ⌨️ Desktop Bindings & Controls
+## 🌐 Live Web Intelligence
 
-### Arch Linux / Omarchy Quattro (Hyprland)
-Configured in `~/.config/hypr/bindings.lua` or `hyprland.conf`:
+Standard LLMs hallucinate outdated sports schedules and news. Kurekizmo queries live DuckDuckGo text/news endpoints and resolves your locale:
 
+> **User:** *"When does today start the MOTOGP in my locale?"*  
+> **Kurek:** *"The MotoGP race at the Japanese Grand Prix starts at 07:00 CEST on Sunday, October 4, which is 14:00 local track time at Motegi. The Sprint race gets underway today at 08:00 CEST."*
+
+---
+
+## ⌨️ Desktop Bindings & CLI
+
+### Hyprland (`~/.config/hypr/bindings.lua` or `hyprland.conf`)
 ```ini
-# Summon Kurek via mouse scroll wheel or keyboard shortcut
+# Summon Kurek via scroll wheel or shortcut
 bind = , mouse:274, exec, kurek toggle
 bind = SUPER, mouse:274, exec, kurek toggle
 bind = SUPER, K, exec, kurek toggle
 ```
 
-### Command-Line Interface (`kurek`)
-
+### CLI Binary (`kurek`)
 ```bash
 kurek toggle           # Toggle listening on / off
-kurek prompt "..."     # Send text query directly without microphone
-kurek status           # Check daemon health & active state
-kurek start            # Launch daemon in background
-kurek stop             # Gracefully stop daemon and audio streams
+kurek prompt "..."     # Direct text query without mic
+kurek status           # Check daemon health & state
+kurek start            # Launch background daemon
+kurek stop             # Stop daemon and audio streams
 ```
 
 ---
 
-## 🚀 Quickstart & Installation
+## 🛠️ Actions & Capabilities
+
+| Action | File | Capabilities |
+|---|---|---|
+| `screen_vision` | `actions/screen_vision.py` | Native `grim` monitor capture, visual inspection, continuous watching |
+| `web_search` | `actions/web_search.py` | DuckDuckGo search & news with locale-aware timetable synthesis |
+| `file_controller` | `actions/file_controller.py` | Read, write, append, search, list, move files across the filesystem |
+| `browser_control` | `actions/browser_control.py` | Playwright browser automation (navigation, clicks, forms, scraping) |
+| `computer_settings` | `actions/computer_settings.py` | Audio volume, brightness, mute, network toggles |
+| `desktop_control` | `actions/desktop.py` | Window minimization, maximization, tiling, workspace switching |
+| `manage_memory` | `actions/memory_tool.py` | Structured recall & bidirectional sync with Hermes memory |
+| `open_app` | `actions/open_app.py` | Launch native Linux binaries, GUI apps, and desktop tools |
+| `reminder` | `actions/reminder.py` | Schedule desktop notifications and system alarms |
+
+---
+
+## 🚀 Quickstart
 
 ### 1. Prerequisites
-* **Arch Linux / Omarchy** (Hyprland / Wayland) or **macOS** (Sonoma / Sequoia)
-* `grim` for native Wayland screenshot capture: `sudo pacman -S grim mpv`
-* Python 3.12+ with `uv` or `venv`
+- **Arch Linux / Omarchy Quattro (Hyprland)** or **macOS**
+- Wayland tools: `sudo pacman -S grim mpv`
+- Python 3.12+
 
-### 2. Clone & Setup
+### 2. Setup & Virtual Environment
 
 ```bash
 git clone git@github.com:nodaysidle/kurekizmo.git /home/arch/dev/nodaysidle/kurekizmo
 cd /home/arch/dev/nodaysidle/kurekizmo
 
-# Create virtual environment & install dependencies
 uv venv
 source .venv/bin/activate
 uv pip install -r requirements.txt
 uv pip install pillow ddgs google-genai
 ```
 
-### 3. Environment Secrets (`.env`)
-
-Create `.env` in the project root:
+### 3. Configure Secrets (`.env`)
 
 ```bash
-# Brain & Reasoning
+# Brain (api.deepseek.com)
 DEEPSEEK_API_KEY=sk-...
 
-# Voice & Speech (Sol Voice)
+# Voice Output (api.x.ai)
 XAI_API_KEY=xai-...
 
-# Visual Perception (Free tier available at aistudio.google.com)
+# Visual Perception (aistudio.google.com - free tier)
 GEMINI_API_KEY=AIzaSy...
 
-# Optional: Ultra-fast cloud STT (falls back to local faster-whisper if omitted)
+# Optional: Deepgram Nova-2 (falls back to local faster-whisper)
 DEEPGRAM_API_KEY=...
 ```
 
-### 4. Install Desktop Integration & Launch
+### 4. Install & Launch
 
 ```bash
-# Link binary to ~/.local/bin and install .desktop entry
 ./install_linux.sh
-
-# Start the daemon
 ./launch_kurek.sh start
 ```
 
 ---
 
-## 🧠 Memory Continuity System
-
-Kurekizmo maintains a persistent **three-tier memory**:
-1. **In-Flight Session Memory:** Automatically records conversational turns and injects the last 10 turns for seamless multi-turn reasoning (`memory/kurek_history.json`).
-2. **Structured Long-Term Store:** Dedicated JSON storage for personal preferences, hardware configurations, and user details (`memory/long_term.json`).
-3. **Hermes Sync:** Dynamically loads and synchronizes with `~/.hermes/profiles/eldio/memories/USER.md` and `MEMORY.md`. Stored facts from Kurek are instantly visible to Hermes and vice-versa.
-
----
-
-## 📊 Performance Comparison
+## 📊 Benchmark
 
 | Metric | Traditional Assistant (Electron/Qt) | Kurekizmo Daemon |
 |---|---|---|
 | **RAM Usage** | ~450MB – 650MB | **~45MB** |
-| **Summon Latency** | 1.8s – 3.2s | **< 200ms** (Instant PipeWire stream) |
-| **Screen Perception** | Slow window grab (~600ms) | **~15ms** native `grim` + Gemini Flash |
+| **Summon Latency** | 1.8s – 3.2s | **< 200ms** |
+| **Monitor Capture** | Slow window grab (~600ms) | **~15ms** (`grim`) |
 | **Voice Output** | Robotic local TTS / Web Speech | **xAI Grok Sol** natural human voice |
-| **Desktop Footprint** | Cluttered persistent window | **100% Headless** + subtle desktop notification |
+| **Desktop Footprint** | Cluttered persistent window | **100% Headless** |
 
 ---
 
 ## 📜 License
 
-Distributed under the **MIT License**. Built with obsessive speed and privacy for [NODAYSIDLE](https://github.com/nodaysidle).
+Distributed under the **MIT License**. Engineered for [NODAYSIDLE](https://github.com/nodaysidle).
