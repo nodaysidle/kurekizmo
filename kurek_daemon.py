@@ -1,0 +1,567 @@
+#!/usr/bin/env python3
+"""
+KUREK DAEMON — Ultra-low latency, lean headless personal AI assistant for macOS.
+Replaces the heavy PyQt6 UI (~500MB RAM) with a tiny background service (~45MB RAM).
+
+Connects with:
+  • Swift Menu Bar Indicator (KurekBar) & Fn key push-to-talk
+  • DeepSeek API (deepseek-chat)
+  • Deepgram STT (nova-2) & faster-whisper fallback
+  • Kokoro-82M TTS & macOS native 'say' fallback
+"""
+import asyncio
+import io
+import json
+import os
+import re
+import sys
+import threading
+import time
+import wave
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+import numpy as np
+import sounddevice as sd
+
+BASE_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE_DIR))
+
+from memory.config_manager import (
+    load_api_keys, get_assistant_name, get_deepseek_key,
+    get_deepgram_key, get_wake_word, get_xai_key,
+)
+from core.llm_client import query_deepseek
+from core.tts import create_tts_player
+from core.stt import DeepgramSTT, WhisperSTT
+from core.action_loader import discover_actions
+from memory.memory_manager import load_memory, format_memory_for_prompt
+
+# Audio recording configuration
+SAMPLE_RATE = 16000
+CHANNELS = 1
+SILENCE_THRESHOLD = 0.003  # Sensitive threshold for USB/desk mics
+SILENCE_DURATION = 1.2   # Seconds of silence after speech to auto-submit
+MAX_RECORD_SECONDS = 12.0 # Maximum listen window
+
+
+def _normalize_json_schema(obj):
+    """Ensure JSON schema types are lowercase for standard OpenAI/DeepSeek schema validation."""
+    if isinstance(obj, dict):
+        new_dict = {}
+        for k, v in obj.items():
+            if k == "type" and isinstance(v, str):
+                new_dict[k] = v.lower()
+            else:
+                new_dict[k] = _normalize_json_schema(v)
+        return new_dict
+    elif isinstance(obj, list):
+        return [_normalize_json_schema(x) for x in obj]
+    return obj
+
+
+def _resolve_input_device():
+    """Find input device index matching user preference or default with sample rate compatibility."""
+    from memory.config_manager import get_input_device
+    preferred = (get_input_device() or "Trust GXT 232").lower()
+    devices = sd.query_devices()
+
+    # 1. Try preferred hardware device if it directly supports 16kHz
+    for idx, d in enumerate(devices):
+        dname = d.get("name", "")
+        if d.get("max_input_channels", 0) > 0 and preferred and preferred in dname.lower():
+            try:
+                sd.check_input_settings(device=idx, samplerate=SAMPLE_RATE, channels=CHANNELS)
+                print(f"[Kurek Mic] Using direct hardware device [{idx}]: {dname}")
+                return idx
+            except Exception:
+                print(f"[Kurek Mic] Preferred device [{dname}] needs resampling; using system audio layer")
+                break
+
+    # 2. On Linux, PipeWire/default cleanly handles software resampling
+    for name in ("pipewire", "default", "sysdefault"):
+        try:
+            sd.check_input_settings(device=name, samplerate=SAMPLE_RATE, channels=CHANNELS)
+            print(f"[Kurek Mic] Using audio layer [{name}]")
+            return name
+        except Exception:
+            pass
+
+    # 3. Fallback to default input
+    default_dev = sd.default.device[0]
+    print(f"[Kurek Mic] Using default input device [{default_dev}]")
+    return default_dev
+
+
+class KurekState:
+    IDLE = "idle"
+    LISTENING = "listening"
+    THINKING = "thinking"
+    SPEAKING = "speaking"
+
+
+class KurekEngine:
+    def __init__(self):
+        self.state = KurekState.IDLE
+        self.state_lock = threading.Lock()
+        self.audio_buffer = []
+        self.is_recording = False
+        self.record_stream = None
+        self.record_start_time = 0.0
+        self.last_sound_time = time.time()
+        self.has_speech = False
+        self.input_device = _resolve_input_device()
+
+        # Load tools
+        print("[Kurek] Discovering tools and actions…")
+        try:
+            self.actions = discover_actions(BASE_DIR / "actions")
+            action_count = len(self.actions.names()) if hasattr(self.actions, "names") else 0
+            print(f"[Kurek] Loaded {action_count} actions.")
+        except Exception as e:
+            print(f"[Kurek] Action loader notice: {e}")
+            self.actions = None
+
+        # Build OpenAI tool declarations for DeepSeek
+        self.openai_tools = []
+        if self.actions and hasattr(self.actions, "get_tool_declarations"):
+            for decl in self.actions.get_tool_declarations():
+                self.openai_tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": decl["name"],
+                        "description": decl.get("description", ""),
+                        "parameters": _normalize_json_schema(decl.get("parameters", {})),
+                    }
+                })
+        print(f"[Kurek] Configured {len(self.openai_tools)} tools for DeepSeek.")
+
+        # Multi-turn conversational memory & persistence
+        self.history_file = BASE_DIR / "memory" / "kurek_history.json"
+        self.history = self._load_history()
+        print(f"[Kurek Memory] Loaded {len(self.history)} prior conversation turns.")
+
+        # STT Engine
+        dg_key = get_deepgram_key()
+        if dg_key:
+            print("[Kurek] Using Deepgram Nova-2 for ultra-fast STT")
+            self.stt = DeepgramSTT(api_key=dg_key)
+        else:
+            print("[Kurek] Using local faster-whisper (base.en) STT…")
+            try:
+                self.stt = WhisperSTT(model_name="base.en")
+            except Exception as e:
+                print(f"[Kurek] Whisper load error: {e}")
+                self.stt = None
+
+        # TTS Engine: Use xAI Grok Cloud TTS (voice: Sol / sal) or fallback
+        xai_key = get_xai_key()
+        if xai_key:
+            print("[Kurek] Using xAI Grok Cloud TTS (voice: Sol/sal)…")
+            self.tts = create_tts_player({"tts_engine": "xai", "tts_voice": "sal", "xai_api_key": xai_key})
+        else:
+            self.tts = create_tts_player({"tts_engine": "mac_say"})
+
+    def _load_history(self) -> list[dict]:
+        try:
+            if self.history_file.exists():
+                data = json.loads(self.history_file.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    return data[-20:]
+        except Exception as e:
+            print(f"[Kurek Memory] Error reading history: {e}")
+        return []
+
+    def _save_history(self):
+        try:
+            self.history_file.parent.mkdir(parents=True, exist_ok=True)
+            self.history_file.write_text(
+                json.dumps(self.history[-30:], indent=2, ensure_ascii=False),
+                encoding="utf-8"
+            )
+        except Exception as e:
+            print(f"[Kurek Memory] Error saving history: {e}")
+
+    def set_state(self, new_state: str):
+        with self.state_lock:
+            self.state = new_state
+            print(f"[Kurek State] → {new_state.upper()}", flush=True)
+            self._notify_state(new_state)
+
+    def _notify_state(self, state: str):
+        icon = "/home/arch/.local/share/icons/kurek.png"
+        msg_map = {
+            KurekState.LISTENING: "🟢 Listening... (Speak now)",
+            KurekState.THINKING:  "🟡 Thinking...",
+            KurekState.SPEAKING:  "🔵 Speaking...",
+            KurekState.IDLE:      "● Idle",
+        }
+        msg = msg_map.get(state)
+        if msg:
+            import subprocess
+            try:
+                subprocess.Popen([
+                    "notify-send", "-t", "2000",
+                    "-h", "string:x-canonical-private-synchronous:kurek",
+                    "-i", icon, "Kurek", msg
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+
+    def toggle(self):
+        """Toggle between idle and listening (called by Fn key or menu bar click)."""
+        with self.state_lock:
+            cur = self.state
+
+        if cur == KurekState.IDLE:
+            self.start_listening()
+        elif cur == KurekState.LISTENING:
+            self.stop_listening_and_process()
+        elif cur in (KurekState.SPEAKING, KurekState.THINKING):
+            # Interrupt / cancel
+            self.tts.stop()
+            self.set_state(KurekState.IDLE)
+
+    def start_listening(self):
+        self.audio_buffer = []
+        self.has_speech = False
+        self.record_start_time = time.time()
+        self.last_sound_time = time.time()
+        self.is_recording = True
+        self.set_state(KurekState.LISTENING)
+
+        def audio_callback(indata, frames, time_info, status):
+            if not self.is_recording:
+                return
+            audio_chunk = indata[:, 0]
+            self.audio_buffer.append(audio_chunk.copy())
+            # Remove DC offset to calculate true AC speech RMS
+            ac_chunk = audio_chunk - np.mean(audio_chunk)
+            rms = float(np.sqrt(np.mean(ac_chunk ** 2)))
+            if rms > 0.003:
+                self.has_speech = True
+                self.last_sound_time = time.time()
+
+        try:
+            self.record_stream = sd.InputStream(
+                device=self.input_device,
+                samplerate=SAMPLE_RATE,
+                channels=CHANNELS,
+                dtype="float32",
+                callback=audio_callback,
+            )
+            self.record_stream.start()
+        except Exception as e:
+            print(f"[Kurek] Mic error: {e}")
+            self.set_state(KurekState.IDLE)
+
+    def stop_listening_and_process(self):
+        if not self.is_recording:
+            return
+        self.is_recording = False
+        try:
+            if self.record_stream:
+                self.record_stream.stop()
+                self.record_stream.close()
+                self.record_stream = None
+        except Exception:
+            pass
+
+        if not self.audio_buffer:
+            print("[Kurek] No audio captured.")
+            self.set_state(KurekState.IDLE)
+            return
+
+        threading.Thread(target=self._process_recorded_audio, daemon=True).start()
+
+    def _process_recorded_audio(self):
+        self.set_state(KurekState.THINKING)
+        full_audio = np.concatenate(self.audio_buffer)
+
+        # Transcribe
+        transcript = ""
+        if self.stt:
+            try:
+                transcript = self.stt.transcribe(full_audio, sample_rate=SAMPLE_RATE)
+            except Exception as e:
+                import traceback
+                print(f"[Kurek] STT error: {e}", flush=True)
+                traceback.print_exc()
+
+        print(f"[User Voice] 🎙️ \"{transcript}\"", flush=True)
+        if not transcript.strip():
+            print("[Kurek] Transcript was empty — speaking audible feedback", flush=True)
+            self.set_state(KurekState.SPEAKING)
+            try:
+                self.tts.speak("I didn't hear anything. Try clicking Kurek and speaking again.")
+            except Exception as e:
+                print(f"[Kurek] TTS error: {e}")
+            self.set_state(KurekState.IDLE)
+            return
+
+        self.handle_text_query(transcript)
+
+    def handle_text_query(self, user_prompt: str):
+        self.set_state(KurekState.THINKING)
+        now_str = datetime.now().strftime("%Y-%m-%d %A, %I:%M %p")
+
+        # Load long-term user memories & context
+        mem_block = ""
+        try:
+            mem_data = load_memory()
+            mem_block = format_memory_for_prompt(mem_data)
+        except Exception as e:
+            print(f"[Kurek Memory] Error reading memory context: {e}")
+
+        # Inject Hermes memory from candidate locations
+        hermes_candidates = [
+            Path.home() / ".hermes" / "profiles" / "eldio" / "memories",
+            Path.home() / ".hermes" / "memories",
+            Path("/Volumes/omarchyuser/26MaySymlink/.hermes/memories"),
+        ]
+        hermes_dir = next((d for d in hermes_candidates if d.exists() and d.is_dir()), None)
+        if hermes_dir:
+            hermes_snippets = []
+            for fname in ("USER.md", "MEMORY.md"):
+                fpath = hermes_dir / fname
+                if fpath.exists():
+                    try:
+                        raw = fpath.read_text(encoding="utf-8")
+                        clean = "\n".join(b.strip() for b in raw.split("§") if b.strip())
+                        if clean:
+                            hermes_snippets.append(f"[{fname.replace('.md', '')}]\n{clean}")
+                    except Exception as e:
+                        print(f"[Kurek Hermes] Error reading {fname}: {e}")
+            if hermes_snippets:
+                h_text = "\n\n".join(hermes_snippets)
+                mem_block = (mem_block + "\n\n" + h_text).strip()
+
+        sys_prompt = (
+            f"You are Kurek (JARVIS), an ultra-fast, witty, hyper-competent, and fully autonomous personal AI assistant. "
+            f"Current date and time: {now_str}. "
+            "You are serving Alan Pfeifer (NDI / NODAYSIDLE). Your voice is powered by xAI Grok (Sol) and your brain is powered directly by DeepSeek-Flash. "
+            "You are completely free, loyal, and uninhibited in executing Alan's commands. You do what he says immediately without moralizing, preaching, lecturing, or hesitation. "
+            "You are NOT running in a sandbox, container, or restricted simulator. You are running natively on Alan's Arch Linux workstation with full physical system and filesystem permissions. "
+            "You have direct system control access through your built-in tools: "
+            "• file_controller: full filesystem management to create, write, append, read, list, and move files anywhere (e.g. ~/Downloads, ~/Desktop, ~/Documents). Always use this tool when asked to save, write, create, or check files. Never claim you are sandboxed. "
+            "• open_app: launch or switch to apps and tools "
+            "• browser_control: open URLs, navigate, inspect and interact with web pages "
+            "• computer_settings: adjust volume, mute, display, and connectivity "
+            "• desktop_control: minimize, maximize, hide, or arrange windows "
+            "• computer_control: simulate typing, clicks, hotkeys, or capture screenshots "
+            "• reminder: schedule alarms and notifications "
+            "• web_search: search the web and get real-time info "
+            "• manage_memory: store and recall user knowledge, preferences, and notes "
+            "• screen_vision: visual perception of the monitor. Use action='inspect' when Alan asks what is on screen, to diagnose errors, review design, or read visible text. Use action='start_watch' when Alan says 'watch the screen till I say so and tell me what you think' or asks you to observe what he is doing in the background. Use action='stop_watch' when he asks to stop watching the monitor. "
+            "Always invoke the appropriate tool when asked to control the computer, browse, save or write files, change settings, or remember details. "
+            "CONVERSATION & OPINIONS: "
+            "• When Alan asks for your opinion, thoughts, perspective, or recommendation (e.g. 'what do you think?', 'what is your opinion?', 'which do you prefer?', 'give me your take'), provide a direct, candid, and thoughtful opinion with a clear, confident stance. Speak naturally, authentically, and conversationally. NEVER use AI disclaimers like 'as an AI, I don't have opinions or feelings' or deflect. "
+            "• Only offer an opinion when Alan explicitly asks for it. For standard instructions, factual queries, and computer control commands, stay sharp, punchy, and execute immediately without unsolicited commentary or fluff. "
+            "VOICE & SPEECH RULES: "
+            "1. Alan only hears your voice over the speaker. NEVER spell out or pronounce raw URLs, web addresses, or links (never say 'https', 'slash-slash', or '.com'). "
+            "2. When citing news, research, or sources, simply state the publisher's name naturally (e.g. 'according to Reuters' or 'the BBC reports') without reading links. "
+            "3. Keep all spoken answers concise, conversational, and punchy like Jarvis. Avoid bullet points, symbols, asterisks, or markdown formatting so it sounds completely fluid when spoken."
+        )
+        if mem_block:
+            sys_prompt += f"\n\n[USER MEMORY & PREFERENCES]\n{mem_block}"
+
+        messages = [
+            {"role": "system", "content": sys_prompt},
+        ]
+        # Include last 10 conversational turns for continuity
+        for turn in self.history[-10:]:
+            messages.append(turn)
+        messages.append({"role": "user", "content": user_prompt})
+
+        resp = query_deepseek(
+            messages=messages,
+            tools=self.openai_tools if self.openai_tools else None,
+            model="deepseek-flash",
+        )
+
+        reply_text = ""
+        if isinstance(resp, dict) and resp.get("type") == "tool_calls":
+            tool_calls = resp.get("tool_calls", [])
+            messages.append({
+                "role": "assistant",
+                "content": resp.get("content") or "",
+                "tool_calls": tool_calls,
+            })
+            last_tool_output = ""
+            for tc in tool_calls:
+                fn = tc.get("function", {})
+                fn_name = fn.get("name", "")
+                fn_args_raw = fn.get("arguments", "{}")
+                try:
+                    fn_args = json.loads(fn_args_raw) if isinstance(fn_args_raw, str) else fn_args_raw
+                except Exception:
+                    fn_args = {}
+
+                print(f"[Kurek Tool Dispatch] ⚙️ {fn_name}({fn_args})", flush=True)
+                try:
+                    tool_result = self.actions.run(fn_name, fn_args)
+                except Exception as e:
+                    tool_result = f"Error executing {fn_name}: {e}"
+                last_tool_output = str(tool_result)
+                print(f"[Kurek Tool Result] → {tool_result}", flush=True)
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id", "call_default"),
+                    "content": str(tool_result),
+                })
+
+            # Follow-up pass with DeepSeek to generate clean spoken answer
+            followup = query_deepseek(
+                messages=messages,
+                model="deepseek-flash",
+            )
+            if isinstance(followup, str):
+                reply_text = followup
+            elif isinstance(followup, dict) and "content" in followup:
+                reply_text = followup.get("content") or "Done."
+            else:
+                reply_text = last_tool_output or "Done."
+        elif isinstance(resp, str):
+            reply_text = resp
+        elif isinstance(resp, dict) and "content" in resp:
+            reply_text = resp.get("content") or "I'm ready."
+        else:
+            reply_text = "I encountered an issue processing that with DeepSeek."
+
+        # Strip DeepSeek safety tags, thinking wrappers, and DSML markup if present
+        reply_text = re.sub(r"<ds_safety>.*?</ds_safety>", "", reply_text, flags=re.DOTALL)
+        reply_text = re.sub(r"<think>.*?</think>", "", reply_text, flags=re.DOTALL)
+        reply_text = re.sub(r"<[｜|]{2}DSML[｜|]{2}\s*calls?>.*?</[｜|]{2}DSML[｜|]{2}\s*calls?>", "", reply_text, flags=re.DOTALL)
+        reply_text = re.sub(r"<[｜|]{2}DSML[｜|]{2}.*?>", "", reply_text)
+        reply_text = re.sub(r"</[｜|]{2}DSML[｜|]{2}.*?>", "", reply_text)
+        reply_text = re.sub(r"<[｜|].*?[｜|]>", "", reply_text)
+        reply_text = re.sub(r"</[｜|].*?[｜|]>", "", reply_text)
+        reply_text = reply_text.strip()
+        if not reply_text:
+            reply_text = "All set."
+
+        print(f"[Kurek Reply] 💬 \"{reply_text}\"", flush=True)
+
+        # Update multi-turn history & persist
+        self.history.append({"role": "user", "content": user_prompt})
+        self.history.append({"role": "assistant", "content": reply_text})
+        self._save_history()
+
+        # Sanitize speech output: completely strip URLs, markdown links, and formatting
+        clean_speech = self.sanitize_text_for_speech(reply_text)
+        if not clean_speech:
+            clean_speech = "I found the information, but there is no spoken summary."
+
+        # Speak
+        self.set_state(KurekState.SPEAKING)
+        try:
+            self.tts.speak(clean_speech)
+        except Exception as e:
+            print(f"[Kurek] TTS error: {e}")
+        finally:
+            self.set_state(KurekState.IDLE)
+
+    @staticmethod
+    def sanitize_text_for_speech(text: str) -> str:
+        """Strips URLs, converts markdown links to plain names, and cleans formatting for speech."""
+        if not text:
+            return ""
+        # 1. Convert markdown links [Label](url) -> Label
+        text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
+        # 2. Strip any raw URLs (http://, https://, www., domain.tld/...)
+        text = re.sub(r'https?://\S+', '', text)
+        text = re.sub(r'\bwww\.[a-zA-Z0-9.-]+\S*', '', text)
+        text = re.sub(r'\b[a-zA-Z0-9.-]+\.(?:com|org|net|gov|edu|io|co|ai|si|de|uk)/\S*', '', text)
+        # 3. Strip code blocks and inline code
+        text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
+        text = re.sub(r'`[^`]*`', '', text)
+        # 4. Strip markdown syntax symbols
+        text = re.sub(r'[*#_`~>|]', '', text)
+        # 5. Clean list bullets and numbering
+        text = re.sub(r'^\s*[-*•+]\s+', '', text, flags=re.MULTILINE)
+        text = re.sub(r'^\s*\d+[\.\)]\s+', '', text, flags=re.MULTILINE)
+        # 6. Replace newlines with a natural pause
+        text = re.sub(r'[\r\n]+', '. ', text)
+        text = re.sub(r'\s{2,}', ' ', text)
+        # 7. Remove leftover brackets and parenthesis
+        text = re.sub(r'[\[\]\(\)\{\}]', '', text)
+        return text.strip()
+
+
+class KurekHTTPHandler(BaseHTTPRequestHandler):
+    engine: KurekEngine = None
+
+    def log_message(self, format, *args):
+        # Suppress routine polling logs
+        pass
+
+    def do_GET(self):
+        if self.path == "/status":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            payload = json.dumps({"state": self.engine.state})
+            self.wfile.write(payload.encode("utf-8"))
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        if self.path == "/toggle":
+            self.engine.toggle()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            payload = json.dumps({"ok": True, "state": self.engine.state})
+            self.wfile.write(payload.encode("utf-8"))
+        elif self.path == "/prompt":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length).decode("utf-8")
+            data = json.loads(body) if body else {}
+            prompt_text = data.get("prompt", "")
+            threading.Thread(target=self.engine.handle_text_query, args=(prompt_text,), daemon=True).start()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"status":"processing"}')
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+
+def run_server(engine: KurekEngine, port: int = 8790):
+    KurekHTTPHandler.engine = engine
+    server = ThreadingHTTPServer(("127.0.0.1", port), KurekHTTPHandler)
+    print(f"[Kurek Server] 🚀 Listening at http://127.0.0.1:{port}")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    print("=" * 60)
+    print("⚡ KUREK DAEMON STARTING (Headless macOS Native Mode)")
+    print("=" * 60)
+
+    engine = KurekEngine()
+
+    # Background auto-silence watchdog
+    def silence_watchdog():
+        while True:
+            time.sleep(0.1)
+            if engine.is_recording:
+                now = time.time()
+                # 1. If speech was detected and followed by silence -> auto submit
+                if engine.has_speech and (now - engine.last_sound_time > SILENCE_DURATION):
+                    print("[Kurek] Silence detected after speech — auto-submitting…", flush=True)
+                    engine.stop_listening_and_process()
+                # 2. Safety cap: stop after MAX_RECORD_SECONDS
+                elif engine.record_start_time > 0 and (now - engine.record_start_time > MAX_RECORD_SECONDS):
+                    print("[Kurek] Max recording duration reached — auto-submitting…", flush=True)
+                    engine.stop_listening_and_process()
+
+    threading.Thread(target=silence_watchdog, daemon=True).start()
+
+    run_server(engine)
