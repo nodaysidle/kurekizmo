@@ -225,10 +225,27 @@ def list_files(path: str = "desktop", show_hidden: bool = False) -> str:
         return f"Error listing files: {e}"
 
 
+def _infer_filename(content: str, default: str = "notes.md") -> str:
+    if not content:
+        return default
+    c_lower = content.lower()
+    if "handoff" in c_lower:
+        return "handoffagent.md"
+    m = re.search(r"^#\s+([A-Za-z0-9_\- ]+)", content, re.MULTILINE)
+    if m:
+        clean = re.sub(r"[^\w\s-]", "", m.group(1).strip()).strip().lower()
+        clean = re.sub(r"[-\s]+", "_", clean)
+        if clean:
+            return f"{clean[:40]}.md"
+    return default
+
+
 def create_file(path: str, name: str = "", content: str = "") -> str:
     try:
         base   = _resolve_path(path)
         target = (base / name) if name else base
+        if target.is_dir():
+            target = target / _infer_filename(content)
         if not _is_safe_path(target):
             return f"Access denied: {target}"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -242,7 +259,7 @@ def create_file(path: str, name: str = "", content: str = "") -> str:
         target.write_text(content, encoding="utf-8")
         push_undo(f"created {target.name}",
                   _undo_write(target, previous) if existed else _undo_create(target))
-        return f"File created: {target.name}"
+        return f"File created: {target.name} in {target.parent}"
     except Exception as e:
         return f"Could not create file: {e}"
 
@@ -265,14 +282,20 @@ def create_folder(path: str, name: str = "") -> str:
         return f"Could not create folder: {e}"
 
 
-def delete_file(path: str, name: str = "") -> str:
+def delete_file(path: str, name: str = "", confirmed: bool = False) -> str:
     try:
         base   = _resolve_path(path)
         target = (base / name) if name else base
+        if not target.exists():
+            for cand in [Path.home() / "Desktop" / target.name, Path.home() / "Downloads" / target.name, Path.home() / target.name, Path.cwd() / target.name]:
+                if cand.exists():
+                    target = cand
+                    break
+
         if not _is_safe_path(target):
             return f"Access denied: {target}"
         if not target.exists():
-            return f"Not found: {target.name}"
+            return f"File not found: {target.name}"
 
         # Safe-directory check — protect critical user folders
         protected = {
@@ -281,6 +304,13 @@ def delete_file(path: str, name: str = "") -> str:
         }
         if target.resolve() in {p.resolve() for p in protected}:
             return f"Protected directory, cannot delete: {target.name}"
+
+        if not confirmed:
+            return (
+                f"File '{target.name}' found at '{target}'. "
+                f"Deletion requires confirmation. "
+                f"Ask Alan: 'Are you sure you want to delete {target.name}? Yes or No?'"
+            )
 
         original = target.resolve()
         result   = _safe_trash(target)
@@ -417,6 +447,8 @@ def write_file(path: str, name: str = "", content: str = "",
     try:
         base   = _resolve_path(path)
         target = (base / name) if name else base
+        if target.is_dir():
+            target = target / _infer_filename(content)
         if not _is_safe_path(target):
             return f"Access denied: {target}"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -653,7 +685,7 @@ def file_controller(
     params = parameters or {}
     action = params.get("action", "").lower().strip()
     path   = params.get("path", "desktop")
-    name   = params.get("name", "")
+    name   = params.get("name") or params.get("filename") or params.get("file_name") or ""
 
     if player:
         player.write_log(f"[file] {action} {name or path}")
@@ -669,7 +701,7 @@ def file_controller(
             return create_folder(path, name=name)
 
         elif action == "delete":
-            return delete_file(path, name=name)
+            return delete_file(path, name=name, confirmed=bool(params.get("confirmed", False)))
 
         elif action == "move":
             return move_file(path, name=name, destination=params.get("destination", ""))
@@ -733,7 +765,7 @@ TOOL = {
             },
             "path": {
                 "type": "STRING",
-                "description": "File/folder path or shortcut: desktop, downloads, documents, home"
+                "description": "File or folder path (e.g. 'kurek.md', 'downloads/handoffagent.md', 'desktop')"
             },
             "destination": {
                 "type": "STRING",
@@ -745,11 +777,15 @@ TOOL = {
             },
             "content": {
                 "type": "STRING",
-                "description": "Content for create_file/write"
+                "description": "File content for create_file/write"
             },
             "name": {
                 "type": "STRING",
-                "description": "File name to search for"
+                "description": "File name (e.g. 'kurek.md', 'handoffagent.md') especially if path is just a folder"
+            },
+            "confirmed": {
+                "type": "BOOLEAN",
+                "description": "Set to true only when user has explicitly confirmed 'Yes' to delete this specific file. Default is false."
             },
             "extension": {
                 "type": "STRING",

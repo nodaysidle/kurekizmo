@@ -17,7 +17,9 @@ config/whatsapp_web/
 # ── Personal data the assistant accumulates about you ─────────────────────────
 memory/long_term.json
 memory/kurek_history.json
+memory/clipboard_history.json
 memory/*.db
+*.md.tmp
 
 # ── Compiled binaries ─────────────────────────────────────────────────────────
 menubar/kurekbar

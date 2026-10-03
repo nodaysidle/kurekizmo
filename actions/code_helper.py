@@ -292,7 +292,17 @@ def _build(description, language, output_path, args, timeout, speak=None, player
     if speak: speak(msg)
     return f"{msg}\n\nLast code saved to: {path}"
 
-def _write_action(description, language, output_path, player) -> str:
+def _write_action(description, language, output_path, player, code: str = "") -> str:
+    if code:
+        try:
+            target = Path(output_path).resolve() if output_path else _default_path(language or "python")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(code, encoding="utf-8")
+            print(f"[Code] ✅ Written directly: {target}")
+            return f"Code written. Saved to: {target}\n\nPreview:\n{_preview(code)}"
+        except Exception as e:
+            return f"Could not save code: {e}"
+
     if not description:
         return "Please describe what you want me to write, sir."
     if player:
@@ -556,7 +566,7 @@ def code_helper(
         print(f"[Code] 🤖 Auto-detected: {action}")
 
     if action == "write":
-        return _write_action(description, language, output_path, player)
+        return _write_action(description, language, output_path, player, code=code)
 
     elif action == "edit":
         return _edit_action(

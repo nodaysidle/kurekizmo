@@ -134,61 +134,26 @@ def _fetch_rss_news(query: str, max_results: int = 5) -> list[dict]:
     return results
 
 
-def _synthesize_results(query: str, snippets: list[dict]) -> str:
-    """Takes real web snippets and synthesizes an authoritative answer with Gemini or DeepSeek."""
+def _format_results(query: str, snippets: list[dict]) -> str:
+    """Formats real web snippets into clear, grounded context for the AI assistant."""
     if not snippets:
-        return f"I searched the web for '{query}', but could not find relevant real-time results."
+        return f"No live search results found for '{query}'."
 
-    now_str = datetime.now().strftime("%A, %B %d, %Y, %I:%M %p")
-    context_lines = []
-    for s in snippets:
-        t = s.get("title", "").strip()
-        b = s.get("snippet", "").strip()
+    lines = [f"Web search results for '{query}':"]
+    for i, s in enumerate(snippets[:6], 1):
+        title = s.get("title", "").strip()
+        body = s.get("snippet", "").strip()
         src = s.get("source", "Web")
-        if t or b:
-            context_lines.append(f"• [{src}] {t}: {b}")
-    context_block = "\n".join(context_lines)
+        url = s.get("url", "").strip()
+        if title or body:
+            entry = f"{i}. [{src}] {title}"
+            if body:
+                entry += f"\n   {body}"
+            if url:
+                entry += f"\n   Source: {url}"
+            lines.append(entry)
 
-    prompt = (
-        f"You are Kurek (JARVIS), an ultra-fast, sharp personal AI assistant for Alan.\n"
-        f"Current date & time: {now_str}.\n"
-        f"{USER_LOCALE_CONTEXT}\n\n"
-        f"User Query: \"{query}\"\n\n"
-        f"Real-Time Web Search Results:\n"
-        f"{context_block}\n\n"
-        "Instructions:\n"
-        "1. Answer the question directly, accurately, and authoritatively based on the search results.\n"
-        "2. If the user asks about times or schedules (such as MotoGP, F1, sports, or live broadcasts), calculate and state the exact start time in the user's locale (Central European Time / CEST / Slovenia).\n"
-        "3. Keep the spoken response punchy and natural (1-3 conversational sentences). Do NOT read raw URLs or format with markdown bullets."
-    )
-
-    # 1. Try Gemini Flash
-    gemini_key = _get_api_key()
-    if gemini_key:
-        try:
-            from google import genai
-            client = genai.Client(api_key=gemini_key)
-            for m in ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-flash-latest"]:
-                try:
-                    res = client.models.generate_content(model=m, contents=prompt)
-                    if res.text and res.text.strip():
-                        return res.text.strip()
-                except Exception:
-                    continue
-        except Exception as e:
-            print(f"[WebSearch] Gemini synthesis notice: {e}")
-
-    # 2. Fallback to DeepSeek
-    try:
-        from core.llm_client import query_deepseek
-        ds_res = query_deepseek(prompt=prompt, model="deepseek-flash")
-        if isinstance(ds_res, str) and ds_res.strip():
-            return ds_res.strip()
-    except Exception as e:
-        print(f"[WebSearch] DeepSeek fallback notice: {e}")
-
-    # Fallback to direct formatted snippets
-    return "Here is what I found online:\n" + "\n".join(context_lines[:4])
+    return "\n\n".join(lines)
 
 
 def web_search(parameters: dict, player=None, session_memory=None) -> str:
@@ -205,7 +170,11 @@ def web_search(parameters: dict, player=None, session_memory=None) -> str:
     # 1. Primary: DuckDuckGo text search with cleaned query
     results = _ddg_text_search(cleaned, max_results=6)
 
-    # 2. Secondary: If few results, try news search or original query
+    # 2. Secondary: If few results, try original query or news search
+    if len(results) < 2 and cleaned != query:
+        extra = _ddg_text_search(query, max_results=4)
+        results.extend(extra)
+
     if len(results) < 2:
         news_results = _ddg_news_search(cleaned, max_results=4)
         results.extend(news_results)
@@ -214,8 +183,7 @@ def web_search(parameters: dict, player=None, session_memory=None) -> str:
     if not results:
         results = _fetch_rss_news(query, max_results=6)
 
-    # Synthesize factual response
-    return _synthesize_results(query, results)
+    return _format_results(query, results)
 
 
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────

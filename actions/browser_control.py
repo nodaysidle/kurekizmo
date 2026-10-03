@@ -1063,7 +1063,7 @@ def _log(player, text: str):
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "browser_control",
-    "description": "Controls any web browser. Use for: opening websites, searching the web, clicking elements, filling forms, scrolling, screenshots, navigation, any web-based task. Simple open/search requests launch the user's own browser normally (their real profile and logged-in accounts); interactive actions (click, type, fill_form...) attach an automation browser. Always pass the 'browser' parameter when the user specifies a browser (e.g. 'open in Edge', 'use Firefox', 'open Chrome'). Multiple browsers can run simultaneously.",
+    "description": "Controls desktop browser GUI windows (navigating to websites, clicking elements, typing, filling forms, scrolling, taking screenshots). NOTE: Do NOT use this tool to find information, look up news, check schedules, or answer factual questions — ALWAYS use 'web_search' for searching and retrieving live web facts.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

@@ -659,7 +659,7 @@ def parse_dsml_tool_calls(text: str) -> tuple[list[dict], str]:
                 except ValueError:
                     params[pname] = pval
         calls.append({
-            "id": f"call_dsml_{i}_{int(re.sub(r'\\D', '', fn_name) or 0)}",
+            "id": f"call_dsml_{i}_{abs(hash(fn_name)) % 100000}",
             "type": "function",
             "function": {
                 "name": fn_name,
@@ -720,11 +720,21 @@ def query_deepseek(
             data = resp.json()
             choice = data["choices"][0]["message"]
             if choice.get("tool_calls"):
-                return {"type": "tool_calls", "tool_calls": choice["tool_calls"], "content": choice.get("content")}
+                return {
+                    "type": "tool_calls",
+                    "tool_calls": choice["tool_calls"],
+                    "content": choice.get("content"),
+                    "reasoning_content": choice.get("reasoning_content"),
+                }
             raw_content = choice.get("content", "")
             dsml_calls, clean_text = parse_dsml_tool_calls(raw_content)
             if dsml_calls:
-                return {"type": "tool_calls", "tool_calls": dsml_calls, "content": clean_text}
+                return {
+                    "type": "tool_calls",
+                    "tool_calls": dsml_calls,
+                    "content": clean_text,
+                    "reasoning_content": choice.get("reasoning_content"),
+                }
             return clean_text.strip()
         else:
             print(f"[DeepSeek] HTTP {resp.status_code}: {resp.text}")

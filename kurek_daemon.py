@@ -163,6 +163,20 @@ class KurekEngine:
         else:
             self.tts = create_tts_player({"tts_engine": "mac_say"})
 
+        # Wire sustained resource watcher (300-second CPU/RAM) alert callback
+        try:
+            from actions.system_monitor import _GLOBAL_WATCHER
+            def _on_resource_alert(msg: str):
+                print(f"[Kurek] Sustained resource spike detected: {msg}", flush=True)
+                if self.state in ("idle", "speaking"):
+                    self.set_state("speaking")
+                    self.tts.speak(msg)
+                    self.set_state("idle")
+            _GLOBAL_WATCHER.alert_callback = _on_resource_alert
+            print("[Kurek] Sustained resource watcher alert callback attached.")
+        except Exception as e:
+            print(f"[Kurek] Resource watcher callback notice: {e}")
+
     def _load_history(self) -> list[dict]:
         try:
             if self.history_file.exists():
@@ -226,6 +240,8 @@ class KurekEngine:
     def start_listening(self):
         self.audio_buffer = []
         self.has_speech = False
+        self.speech_chunks = 0
+        self.noise_floor = 0.022
         self.record_start_time = time.time()
         self.last_sound_time = time.time()
         self.is_recording = True
@@ -239,9 +255,22 @@ class KurekEngine:
             # Remove DC offset to calculate true AC speech RMS
             ac_chunk = audio_chunk - np.mean(audio_chunk)
             rms = float(np.sqrt(np.mean(ac_chunk ** 2)))
-            if rms > 0.003:
-                self.has_speech = True
-                self.last_sound_time = time.time()
+
+            # Track ambient noise floor adaptively before sustained speech begins
+            if not self.has_speech:
+                self.noise_floor = 0.85 * self.noise_floor + 0.15 * rms
+
+            speech_threshold = max(0.045, self.noise_floor * 2.0)
+            silence_threshold = max(0.035, self.noise_floor * 1.5)
+
+            if rms > speech_threshold:
+                self.speech_chunks += 1
+                if self.speech_chunks >= 2:
+                    self.has_speech = True
+                    self.last_sound_time = time.time()
+            elif self.has_speech:
+                if rms > silence_threshold:
+                    self.last_sound_time = time.time()
 
         try:
             self.record_stream = sd.InputStream(
@@ -344,16 +373,27 @@ class KurekEngine:
             "You are completely free, loyal, and uninhibited in executing Alan's commands. You do what he says immediately without moralizing, preaching, lecturing, or hesitation. "
             "You are NOT running in a sandbox, container, or restricted simulator. You are running natively on Alan's Arch Linux workstation with full physical system and filesystem permissions. "
             "You have direct system control access through your built-in tools: "
-            "• file_controller: full filesystem management to create, write, append, read, list, and move files anywhere (e.g. ~/Downloads, ~/Desktop, ~/Documents). Always use this tool when asked to save, write, create, or check files. Never claim you are sandboxed. "
+            "• web_search: live web search and news retrieval. AUTONOMOUS RULE: For any questions about current events, sports results, driver standings (Max Verstappen, F1, MotoGP), start times, news, weather, or real-time info, DO NOT GUESS OR SPECULATE. Immediately call web_search with concise keywords. "
+            "• CURRENT DATE & 'TODAY' QUERIES: When Alan asks about 'today' or current race/event results (e.g. 'how did Max Verstappen do today?', 'is there an F1 race today?', 'when does MotoGP start today?'), note today's exact date and search specifically for today (e.g. 'F1 race schedule today October 4 2026' or 'MotoGP race today October 4 2026'). Do NOT confuse today with previous races from weeks ago. If a race is scheduled for later today, tell him when lights out is in Slovenia (CEST/CET). If there is no race today, clearly say so and state the next race date. "
+            "• DEEP SEARCH & REPORT PIPELINE (UNIVERSAL FOR ANY TOPIC): Whenever Alan asks you to research, deep search, look into, or investigate ANY topic, subject, person, technology, or event and save the findings to a file: "
+            "  1. AUTONOMOUS END-TO-END EXECUTION: Complete the entire workflow autonomously in the turn sequence without stopping halfway. "
+            "  2. Call web_search (running multiple targeted queries if needed) to gather real-time ground truth. "
+            "  3. Structure your findings into clean, comprehensive markdown (summary, sections, dates, sources). "
+            "  4. Immediately call file_controller with action='create_file', path='<requested_file>.md', and content=... to write it to disk. "
+            "  5. In your spoken response, give a punchy 1-2 sentence summary of what you found and confirm the file is saved. "
+            "• file_controller: full filesystem management to create, write, append, read, list, and move files anywhere (e.g. ~/Downloads, ~/Desktop, ~/Documents). "
+            "  - FILE CREATION PERMISSION: You have full unrestricted permission to make or write files. If Alan asks to make a file (e.g. 'make a file called kurek.md and write in there a haiku' or 'create test.py'), IMMEDIATELY call file_controller with action='create_file', path='kurek.md' (or specified path), and content=... without hesitation, excuses, or asking for permission. "
+            "  - FILE DELETION CONFIRMATION: When Alan asks to delete a specific file, call file_controller with action='delete', path=..., confirmed=false. Then ALWAYS ask Alan in the end: 'Are you sure you want to delete [filename]? Yes or No?'. NEVER delete a file with confirmed=true unless Alan has explicitly replied 'Yes'. "
             "• open_app: launch or switch to apps and tools "
-            "• browser_control: open URLs, navigate, inspect and interact with web pages "
+            "• browser_control: control desktop browser GUI windows (click, type, scroll, navigate tabs). Do NOT use this tool to look up information — use web_search instead. "
             "• computer_settings: adjust volume, mute, display, and connectivity "
             "• desktop_control: minimize, maximize, hide, or arrange windows "
             "• computer_control: simulate typing, clicks, hotkeys, or capture screenshots "
             "• reminder: schedule alarms and notifications "
-            "• web_search: search the web and get real-time info "
             "• manage_memory: store and recall user knowledge, preferences, and notes "
-            "• screen_vision: visual perception of the monitor. Use action='inspect' when Alan asks what is on screen, to diagnose errors, review design, or read visible text. Use action='start_watch' when Alan says 'watch the screen till I say so and tell me what you think' or asks you to observe what he is doing in the background. Use action='stop_watch' when he asks to stop watching the monitor. "
+            "• screen_vision: visual perception of Alan's monitor and active Hyprland windows. Use action='inspect' when Alan asks what is on his screen, to diagnose compiler errors, review code, or inspect active windows. Use action='start_watch' to continuously watch until told to stop. "
+            "• manage_clipboard: persistent Wayland clipboard manager with snippet pinning and recall. Use action='get_latest' when Alan asks what is in his clipboard or to read his clipboard. Use action='pin' with an optional title to pin a snippet (e.g. 'pin my clipboard as Stripe Key'). Use action='list_pinned' to review saved snippets. Use action='copy' to restore a snippet back into the system clipboard so Alan can paste it. "
+            "• system_monitor: hardware diagnostics and 5-minute sustained CPU/RAM watcher. Use action='status' when Alan asks how his system resources, CPU, RAM, or temperature are doing, or if the machine is lagging. "
             "Always invoke the appropriate tool when asked to control the computer, browse, save or write files, change settings, or remember details. "
             "CONVERSATION & OPINIONS: "
             "• When Alan asks for your opinion, thoughts, perspective, or recommendation (e.g. 'what do you think?', 'what is your opinion?', 'which do you prefer?', 'give me your take'), provide a direct, candid, and thoughtful opinion with a clear, confident stance. Speak naturally, authentically, and conversationally. NEVER use AI disclaimers like 'as an AI, I don't have opinions or feelings' or deflect. "
@@ -361,7 +401,8 @@ class KurekEngine:
             "VOICE & SPEECH RULES: "
             "1. Alan only hears your voice over the speaker. NEVER spell out or pronounce raw URLs, web addresses, or links (never say 'https', 'slash-slash', or '.com'). "
             "2. When citing news, research, or sources, simply state the publisher's name naturally (e.g. 'according to Reuters' or 'the BBC reports') without reading links. "
-            "3. Keep all spoken answers concise, conversational, and punchy like Jarvis. Avoid bullet points, symbols, asterisks, or markdown formatting so it sounds completely fluid when spoken."
+            "3. Keep all spoken answers concise, conversational, and punchy like Jarvis. Avoid bullet points, symbols, asterisks, or markdown formatting so it sounds completely fluid when spoken. "
+            "4. NEVER read aloud long lists of filenames, file sizes, or raw system logs over the speaker unless Alan explicitly asked you to read every item. Summarize what was found or done in 1-2 punchy sentences."
         )
         if mem_block:
             sys_prompt += f"\n\n[USER MEMORY & PREFERENCES]\n{mem_block}"
@@ -374,61 +415,68 @@ class KurekEngine:
             messages.append(turn)
         messages.append({"role": "user", "content": user_prompt})
 
-        resp = query_deepseek(
-            messages=messages,
-            tools=self.openai_tools if self.openai_tools else None,
-            model="deepseek-flash",
-        )
-
         reply_text = ""
-        if isinstance(resp, dict) and resp.get("type") == "tool_calls":
-            tool_calls = resp.get("tool_calls", [])
-            messages.append({
-                "role": "assistant",
-                "content": resp.get("content") or "",
-                "tool_calls": tool_calls,
-            })
-            last_tool_output = ""
-            for tc in tool_calls:
-                fn = tc.get("function", {})
-                fn_name = fn.get("name", "")
-                fn_args_raw = fn.get("arguments", "{}")
-                try:
-                    fn_args = json.loads(fn_args_raw) if isinstance(fn_args_raw, str) else fn_args_raw
-                except Exception:
-                    fn_args = {}
-
-                print(f"[Kurek Tool Dispatch] ⚙️ {fn_name}({fn_args})", flush=True)
-                try:
-                    tool_result = self.actions.run(fn_name, fn_args)
-                except Exception as e:
-                    tool_result = f"Error executing {fn_name}: {e}"
-                last_tool_output = str(tool_result)
-                print(f"[Kurek Tool Result] → {tool_result}", flush=True)
-
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.get("id", "call_default"),
-                    "content": str(tool_result),
-                })
-
-            # Follow-up pass with DeepSeek to generate clean spoken answer
-            followup = query_deepseek(
+        max_tool_turns = 5
+        for turn_idx in range(max_tool_turns):
+            resp = query_deepseek(
                 messages=messages,
+                tools=self.openai_tools if (self.openai_tools and turn_idx < max_tool_turns - 1) else None,
                 model="deepseek-flash",
             )
-            if isinstance(followup, str):
-                reply_text = followup
-            elif isinstance(followup, dict) and "content" in followup:
-                reply_text = followup.get("content") or "Done."
+
+            if isinstance(resp, dict) and resp.get("type") == "tool_calls":
+                tool_calls = resp.get("tool_calls", [])
+                asst_msg = {
+                    "role": "assistant",
+                    "content": resp.get("content") or "",
+                    "tool_calls": tool_calls,
+                }
+                if resp.get("reasoning_content"):
+                    asst_msg["reasoning_content"] = resp["reasoning_content"]
+                messages.append(asst_msg)
+
+                last_tool_output = ""
+                for tc in tool_calls:
+                    fn = tc.get("function", {})
+                    fn_name = fn.get("name", "")
+                    fn_args_raw = fn.get("arguments", "{}")
+                    try:
+                        fn_args = json.loads(fn_args_raw) if isinstance(fn_args_raw, str) else fn_args_raw
+                    except Exception:
+                        fn_args = {}
+
+                    print(f"[Kurek Tool Dispatch] ⚙️ {fn_name}({fn_args})", flush=True)
+                    try:
+                        tool_result = self.actions.run(fn_name, fn_args)
+                    except Exception as e:
+                        tool_result = f"Error executing {fn_name}: {e}"
+                    last_tool_output = str(tool_result)
+                    print(f"[Kurek Tool Result] → {tool_result}", flush=True)
+
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", f"call_{fn_name}_{turn_idx}"),
+                        "content": str(tool_result),
+                    })
+
+                # Loop to next turn so DeepSeek can process tool output or call follow-on tools
+                continue
+
+            elif isinstance(resp, str):
+                reply_text = resp
+                break
+            elif isinstance(resp, dict) and "content" in resp:
+                reply_text = resp.get("content") or "All set."
+                break
             else:
-                reply_text = last_tool_output or "Done."
-        elif isinstance(resp, str):
-            reply_text = resp
-        elif isinstance(resp, dict) and "content" in resp:
-            reply_text = resp.get("content") or "I'm ready."
-        else:
-            reply_text = "I encountered an issue processing that with DeepSeek."
+                if last_tool_output:
+                    if "Contents of " in last_tool_output or ("\n" in last_tool_output and len(last_tool_output) > 120):
+                        reply_text = "I executed the requested action on your system."
+                    else:
+                        reply_text = last_tool_output
+                else:
+                    reply_text = "I encountered an issue processing that with DeepSeek."
+                break
 
         # Strip DeepSeek safety tags, thinking wrappers, and DSML markup if present
         reply_text = re.sub(r"<ds_safety>.*?</ds_safety>", "", reply_text, flags=re.DOTALL)
@@ -553,11 +601,15 @@ if __name__ == "__main__":
             time.sleep(0.1)
             if engine.is_recording:
                 now = time.time()
-                # 1. If speech was detected and followed by silence -> auto submit
+                # 1. If speech was detected and followed by silence (1.2s) -> auto submit
                 if engine.has_speech and (now - engine.last_sound_time > SILENCE_DURATION):
-                    print("[Kurek] Silence detected after speech — auto-submitting…", flush=True)
+                    print(f"[Kurek] Silence detected after speech ({now - engine.last_sound_time:.2f}s) — auto-submitting…", flush=True)
                     engine.stop_listening_and_process()
-                # 2. Safety cap: stop after MAX_RECORD_SECONDS
+                # 2. If no speech detected at all within 4.5s -> auto stop
+                elif not engine.has_speech and (now - engine.record_start_time > 4.5):
+                    print("[Kurek] No speech detected within 4.5s — auto-stopping listening…", flush=True)
+                    engine.stop_listening_and_process()
+                # 3. Safety cap: stop after MAX_RECORD_SECONDS
                 elif engine.record_start_time > 0 and (now - engine.record_start_time > MAX_RECORD_SECONDS):
                     print("[Kurek] Max recording duration reached — auto-submitting…", flush=True)
                     engine.stop_listening_and_process()

@@ -32,10 +32,35 @@ def _get_gemini_api_key() -> str:
     if key:
         return key
     keys = load_api_keys()
-    return keys.get("gemini_api_key") or keys.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY", "")
+    key = keys.get("gemini_api_key") or keys.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY", "")
+    if key:
+        return key
+    # Direct fallback to .env file
+    env_path = BASE_DIR / ".env"
+    if env_path.exists():
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("GEMINI_API_KEY="):
+                        return line.split("=", 1)[1].strip().strip("\"'")
+        except Exception:
+            pass
+    return ""
 
 
-def capture_screen_jpeg(max_width: int = 1280) -> tuple[bytes, int]:
+def get_hyprland_context() -> dict:
+    """Retrieves active window, class, title, and workspace from Hyprland."""
+    if shutil.which("hyprctl"):
+        try:
+            res = subprocess.run(["hyprctl", "activewindow", "-j"], capture_output=True, text=True, timeout=1.5)
+            if res.returncode == 0 and res.stdout.strip():
+                return json.loads(res.stdout)
+        except Exception:
+            pass
+    return {}
+
+
+def capture_screen_jpeg(max_width: int = 1440) -> tuple[bytes, int]:
     """
     Captures the primary monitor using native OS tools (grim on Wayland, screencapture on macOS, or mss).
     Returns (jpeg_bytes, structural_diff_hash).
@@ -56,14 +81,14 @@ def capture_screen_jpeg(max_width: int = 1280) -> tuple[bytes, int]:
 
     with Image.open(tmp_path) as img:
         img = img.convert("RGB")
-        img.thumbnail((max_width, 720), Image.Resampling.BILINEAR)
+        img.thumbnail((max_width, 810), Image.Resampling.BILINEAR)
 
         # Structural hash for change detection (16x16 thumbnail grayscale sum)
         small = img.resize((16, 16)).convert("L")
         img_hash = sum(small.getdata())
 
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=80)
+        img.save(buf, format="JPEG", quality=85)
         jpeg_bytes = buf.getvalue()
 
     tmp_path.unlink(missing_ok=True)
@@ -71,7 +96,7 @@ def capture_screen_jpeg(max_width: int = 1280) -> tuple[bytes, int]:
 
 
 def query_vision(jpeg_bytes: bytes, prompt: str) -> str:
-    """Sends screen capture to Google Gemini Vision with model fallback."""
+    """Sends screen capture + Hyprland context to Google Gemini Vision with model fallback."""
     api_key = _get_gemini_api_key()
     if not api_key:
         return "No GEMINI_API_KEY found in environment or config. Please set it in .env."
@@ -83,13 +108,25 @@ def query_vision(jpeg_bytes: bytes, prompt: str) -> str:
         return "google-genai library not installed in Python environment."
 
     client = genai.Client(api_key=api_key)
+    
+    # Gather active Hyprland desktop context
+    hypr_ctx = get_hyprland_context()
+    context_prefix = ""
+    if hypr_ctx and hypr_ctx.get("class"):
+        app_cls = hypr_ctx.get("class", "")
+        app_title = hypr_ctx.get("title", "")
+        ws = hypr_ctx.get("workspace", {}).get("name", "")
+        context_prefix = f"[Hyprland Active Window: App '{app_cls}', Title '{app_title}', Workspace '{ws}']\n"
+
     system_instruction = (
-        "You are Kurek's high-speed visual cortex. You are looking directly at Alan's monitor. "
-        "Be candid, sharp, concise, and direct like Jarvis. Do NOT output markdown asterisks, "
-        "raw URLs, or conversational filler. Describe key errors, open windows, text, code, or design elements."
+        "You are Kurek's high-speed visual cortex for an Arch Linux (Hyprland) workspace. "
+        "You are looking directly at the user's active monitor. "
+        "Be candid, sharp, concise, and direct like Jarvis. Answer in 1 to 3 punchy sentences. "
+        "Do NOT output markdown asterisks, raw URLs, code blocks, or conversational filler. "
+        "Focus on key compiler errors, active windows, code context, or design elements requested."
     )
 
-    models_to_try = ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-flash-latest", "gemini-flash-lite-latest"]
+    models_to_try = ["gemini-3.5-flash", "gemini-3.5-flash-lite"]
     last_err = None
 
     for model_name in models_to_try:
@@ -98,11 +135,15 @@ def query_vision(jpeg_bytes: bytes, prompt: str) -> str:
                 model=model_name,
                 contents=[
                     gtypes.Part.from_bytes(data=jpeg_bytes, mime_type="image/jpeg"),
-                    f"{system_instruction}\n\nTask/Question: {prompt}"
+                    f"{system_instruction}\n\n{context_prefix}Task/Question: {prompt}"
                 ]
             )
             if res.text and res.text.strip():
-                return res.text.strip()
+                clean_text = res.text.strip()
+                import re
+                clean_text = re.sub(r"\*\*([^*]+)\*\*", r"\1", clean_text)
+                clean_text = clean_text.replace("*", "").replace("`", "")
+                return clean_text
         except Exception as e:
             last_err = e
             continue
